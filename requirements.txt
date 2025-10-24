@@ -1,0 +1,15 @@
+sounddevice==0.5.2
+keyboard==0.13.5
+pyperclip==1.11.0
+librosa==0.11.0
+soundfile==0.13.1
+funasr_onnx==0.4.1
+jieba==0.42.1
+
+# Optional backends for model downloading (recommended)
+# 选其一或都装：用于 AutoModel 拉取/缓存模型
+modelscope==1.30.0
+
+# 说明：
+# - 切换为 ONNX 路线（onnxruntime）；如需 GPU/PyTorch，请安装 torch(+cu) 与 torchaudio。
+

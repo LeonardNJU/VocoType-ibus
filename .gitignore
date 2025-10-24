@@ -1,0 +1,16 @@
+.venv
+.idea/
+logs
+*.wav
+dataset/
+__pycache__/
+build
+dist
+*.spec
+
+pipdeptree.txt
+requirements.lock.txt
+todo.md
+/models
+/scripts
+
