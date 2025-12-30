@@ -14,6 +14,7 @@ import os
 import sys
 import warnings
 import time
+import threading
 
 # 过滤掉 jieba 的 pkg_resources 弃用警告
 warnings.filterwarnings("ignore", category=UserWarning, module="jieba._compat")
@@ -56,9 +57,12 @@ class FunASRServer:
             self.device,
         )
 
-        # 设置信号处理
-        signal.signal(signal.SIGTERM, self._signal_handler)
-        signal.signal(signal.SIGINT, self._signal_handler)
+        # 仅主线程注册信号处理，避免子线程触发异常。
+        if threading.current_thread() is threading.main_thread():
+            signal.signal(signal.SIGTERM, self._signal_handler)
+            signal.signal(signal.SIGINT, self._signal_handler)
+        else:
+            logger.info("非主线程启动，跳过信号处理注册")
 
     def __del__(self):
         """析构函数，确保释放模型资源"""
