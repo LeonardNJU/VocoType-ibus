@@ -65,22 +65,24 @@ cd vocotype-cli
 ### 3. 安装依赖
 
 ```bash
-# 创建并激活虚拟环境（推荐使用 uv）
-pip install uv
-uv venv --python 3.12
-source .venv/bin/activate
+# 如果你想直接使用系统 Python（不使用虚拟环境），先安装依赖
+pip install -r requirements.txt
 
-# 安装 Python 依赖
-uv pip install -e .
-
-# 可选：使用 pinned 版本
-uv pip install -r requirements.txt
+# 否则跳过依赖安装，脚本会自动创建/使用虚拟环境并安装依赖
+# （优先使用 uv，如果系统已安装）
 
 # 安装 IBus 引擎
 ./scripts/install-ibus.sh
 
 # 注意：安装过程会自动运行音频配置向导，
 # 请按提示选择麦克风并测试录音效果
+#
+# 该脚本会询问使用的 Python 环境：
+# - 项目虚拟环境（推荐）
+# - 用户级虚拟环境 (~/.local/share/vocotype/.venv)
+# - 系统 Python（省空间，需自行安装依赖）
+#
+# 如果系统已安装 uv，脚本会优先使用 uv 创建虚拟环境并安装依赖。
 
 # 重启 IBus
 ibus restart
