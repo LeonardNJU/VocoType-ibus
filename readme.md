@@ -349,3 +349,5 @@ PTT_KEYVAL = IBus.KEY_F9  # 修改为其他按键
 ## 📄 许可证
 
 本项目继承原 VoCoType 项目的许可证。请查看 [LICENSE](LICENSE) 文件了解详情。
+
+![Star History Chart](https://api.star-history.com/svg?repos=LeonardNJU/VocoType-ibus&type=Date)
