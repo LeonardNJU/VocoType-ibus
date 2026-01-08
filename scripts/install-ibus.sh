@@ -30,13 +30,84 @@ PYTHON_CMD=$(detect_python) || {
     echo "      而 onnxruntime 官方尚未支持 Python 3.13+。"
     echo "      参考: https://github.com/microsoft/onnxruntime/issues/21292"
     echo ""
-    echo "请安装 Python 3.12:"
-    echo "  Fedora: sudo dnf install python3.12"
-    echo "  Ubuntu: sudo apt install python3.12"
-    echo "  Arch:   sudo pacman -S python312"
+    echo "解决方案："
+    echo ""
+    echo "  【推荐】安装 uv（自动管理 Python 版本和虚拟环境）："
+    echo "    curl -LsSf https://astral.sh/uv/install.sh | sh"
+    echo "    然后重新打开终端，再运行本脚本"
+    echo ""
+    echo "  或手动安装 Python 3.12："
+    echo "    Fedora:       sudo dnf install python3.12"
+    echo "    Ubuntu 22.04: sudo apt install python3.12 python3.12-venv"
+    echo "    Debian 13:    官方源无 3.12，建议使用 uv"
+    echo "    Arch:         sudo pacman -S python312"
     exit 1
 }
 echo "检测到兼容的 Python: $PYTHON_CMD"
+
+# 检测 IBus 引擎必需的系统构建依赖（用于编译 pycairo/pygobject）
+check_build_deps() {
+    local missing=""
+
+    if ! command -v pkg-config >/dev/null 2>&1; then
+        missing="$missing pkg-config"
+    fi
+
+    # 检测 cairo 开发库
+    if ! pkg-config --exists cairo 2>/dev/null; then
+        missing="$missing libcairo2-dev"
+    fi
+
+    # 检测 gobject-introspection 开发库 (girepository-2.0)
+    if ! pkg-config --exists girepository-2.0 2>/dev/null; then
+        missing="$missing libgirepository-2.0-dev"
+    fi
+
+    # 检测 PortAudio 运行时库（sounddevice 需要）
+    if ! ldconfig -p 2>/dev/null | grep -q libportaudio; then
+        missing="$missing libportaudio2"
+    fi
+
+    # 检测 Python 开发头文件（仅当没有 uv 时需要）
+    if ! command -v uv >/dev/null 2>&1; then
+        py_version=$("$PYTHON_CMD" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+        if ! pkg-config --exists "python-${py_version}-embed" 2>/dev/null && \
+           ! pkg-config --exists "python-${py_version}" 2>/dev/null && \
+           ! "$PYTHON_CMD" -c "import sysconfig; exit(0 if sysconfig.get_config_var('INCLUDEPY') and __import__('os').path.exists(sysconfig.get_config_var('INCLUDEPY') + '/Python.h') else 1)" 2>/dev/null; then
+            missing="$missing python${py_version}-dev"
+        fi
+    fi
+
+    echo "$missing"
+}
+
+if [ -f /etc/debian_version ]; then
+    MISSING_DEPS=$(check_build_deps)
+    if [ -n "$MISSING_DEPS" ]; then
+        echo ""
+        echo "⚠️  缺少编译 IBus 引擎依赖所需的系统库"
+        echo ""
+        INSTALL_CMD="sudo apt install -y$MISSING_DEPS"
+        echo "需要安装：$MISSING_DEPS"
+        echo ""
+        read -r -p "是否现在自动安装？(Y/n): " AUTO_INSTALL_DEPS
+        if [[ ! "$AUTO_INSTALL_DEPS" =~ ^[Nn]$ ]]; then
+            echo "正在安装系统依赖..."
+            if eval "$INSTALL_CMD"; then
+                echo "✓ 系统依赖安装成功"
+            else
+                echo "❌ 系统依赖安装失败"
+                echo "   请手动执行: $INSTALL_CMD"
+                exit 1
+            fi
+        else
+            echo "请先安装系统依赖："
+            echo "  $INSTALL_CMD"
+            exit 1
+        fi
+        echo ""
+    fi
+fi
 
 # 用户级安装路径
 INSTALL_DIR="$HOME/.local/share/vocotype"
@@ -169,6 +240,26 @@ if [ "$USE_SYSTEM_PYTHON" != "1" ] && [ ! -x "$PYTHON" ]; then
     if command -v uv >/dev/null 2>&1; then
         uv venv --python "$PYTHON_CMD" "$VENV_DIR"
     else
+        # Debian/Ubuntu 需要单独安装 python3.x-venv 包
+        if [ -f /etc/debian_version ]; then
+            py_minor=$("$PYTHON_CMD" -c "import sys; print(sys.version_info.minor)")
+            VENV_PKG="python3.${py_minor}-venv"
+            if ! "$PYTHON_CMD" -c "import ensurepip" 2>/dev/null; then
+                echo ""
+                echo "⚠️  缺少 ensurepip 模块，无法创建完整的虚拟环境"
+                echo ""
+                echo "解决方案："
+                echo ""
+                echo "  【推荐】安装 uv（自动管理虚拟环境，无需系统 venv 包）："
+                echo "    curl -LsSf https://astral.sh/uv/install.sh | sh"
+                echo "    然后重新打开终端，再运行本脚本"
+                echo ""
+                echo "  或尝试安装 $VENV_PKG（Debian 13 官方源可能没有）："
+                echo "    sudo apt install $VENV_PKG"
+                echo ""
+                exit 1
+            fi
+        fi
         "$PYTHON_CMD" -m venv "$VENV_DIR"
     fi
 fi
@@ -283,9 +374,37 @@ else
     VOCOTYPE_VERSION="1.0.0"
 fi
 
-sed -e "s|VOCOTYPE_EXEC_PATH|$EXEC_PATH|g" \
-    -e "s|VOCOTYPE_VERSION|$VOCOTYPE_VERSION|g" \
-    "$PROJECT_DIR/data/ibus/vocotype.xml.in" > "$COMPONENT_DIR/vocotype.xml"
+# GNOME 环境下 XDG_DATA_DIRS 不包含用户目录，需要安装到系统目录
+SYSTEM_COMPONENT_DIR="/usr/share/ibus/component"
+USE_SYSTEM_COMPONENT=0
+
+if [ "$XDG_CURRENT_DESKTOP" = "GNOME" ] || [ -f /etc/debian_version ]; then
+    echo "检测到 GNOME/Debian 环境，IBus 组件将安装到系统目录"
+    USE_SYSTEM_COMPONENT=1
+fi
+
+if [ "$USE_SYSTEM_COMPONENT" = "1" ]; then
+    sed -e "s|VOCOTYPE_EXEC_PATH|$EXEC_PATH|g" \
+        -e "s|VOCOTYPE_VERSION|$VOCOTYPE_VERSION|g" \
+        "$PROJECT_DIR/data/ibus/vocotype.xml.in" > "/tmp/vocotype.xml"
+
+    if sudo cp "/tmp/vocotype.xml" "$SYSTEM_COMPONENT_DIR/vocotype.xml"; then
+        echo "✓ IBus 组件已安装到 $SYSTEM_COMPONENT_DIR"
+        rm -f "/tmp/vocotype.xml"
+    else
+        echo "⚠️  无法安装到系统目录，尝试用户目录..."
+        mkdir -p "$COMPONENT_DIR"
+        mv "/tmp/vocotype.xml" "$COMPONENT_DIR/vocotype.xml"
+        echo "  已安装到 $COMPONENT_DIR"
+        echo "  注意：如果 IBus 找不到输入法，请手动执行："
+        echo "    sudo cp $COMPONENT_DIR/vocotype.xml $SYSTEM_COMPONENT_DIR/"
+    fi
+else
+    mkdir -p "$COMPONENT_DIR"
+    sed -e "s|VOCOTYPE_EXEC_PATH|$EXEC_PATH|g" \
+        -e "s|VOCOTYPE_VERSION|$VOCOTYPE_VERSION|g" \
+        "$PROJECT_DIR/data/ibus/vocotype.xml.in" > "$COMPONENT_DIR/vocotype.xml"
+fi
 
 echo ""
 echo "=== 安装完成 ==="
