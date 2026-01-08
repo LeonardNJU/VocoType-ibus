@@ -168,6 +168,16 @@ IBus 和 Fcitx 5 是**并列独立**的实现，共享 VoCoType 核心（语音�
 - `iic/speech_fsmn_vad_zh-cn-16k-common-onnx`
 - `iic/punc_ct-transformer_zh-cn-common-vocab272727-onnx`
 
-## 许可证
+## 📄 许可证
 
-本项目继承原 VoCoType 项目的许可证。详见 [LICENSE](LICENSE)。
+本项目继承原 VoCoType 项目的许可证。请查看 [LICENSE](LICENSE) 文件了解详情。
+
+## Star History
+
+<a href="https://www.star-history.com/#LeonardNJU/VocoType-ibus&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=LeonardNJU/VocoType-ibus&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=LeonardNJU/VocoType-ibus&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=LeonardNJU/VocoType-ibus&type=date&legend=top-left" />
+ </picture>
+</a>
