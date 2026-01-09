@@ -198,19 +198,21 @@ class VoCoTypeEngine(IBus.Engine):
                 from pyrime.session import Session
                 from pyrime.ime import Context
 
-                # 优先使用 ibus-rime 用户目录，保证配置完整可用
+                # 按优先级选择用户目录
+                # 1. 优先使用有 default.yaml 的用户目录（用户自定义配置）
+                # 2. 否则使用 ibus-rime 目录（如果存在）
+                # 3. 最后使用 vocotype 目录
                 vocotype_user_dir = Path.home() / ".config" / "vocotype" / "rime"
                 ibus_rime_user = Path.home() / ".config" / "ibus" / "rime"
-                user_data_dir = None
+
                 if (ibus_rime_user / "default.yaml").exists():
                     user_data_dir = ibus_rime_user
                 elif (vocotype_user_dir / "default.yaml").exists():
                     user_data_dir = vocotype_user_dir
+                elif ibus_rime_user.exists():
+                    user_data_dir = ibus_rime_user
                 else:
-                    logger.error("找不到可用的 Rime 配置目录（缺少 default.yaml）")
-                    return False
-
-                if user_data_dir == vocotype_user_dir and not user_data_dir.exists():
+                    user_data_dir = vocotype_user_dir
                     user_data_dir.mkdir(parents=True, exist_ok=True)
 
                 # 查找共享数据目录
@@ -221,6 +223,12 @@ class VoCoTypeEngine(IBus.Engine):
                 shared_data_dir = next((d for d in shared_dirs if d.exists()), None)
                 if shared_data_dir is None:
                     logger.error("找不到 Rime 共享数据目录")
+                    return False
+
+                # 验证至少有一个 default.yaml 可用（用户或系统）
+                if not (user_data_dir / "default.yaml").exists() and \
+                   not (shared_data_dir / "default.yaml").exists():
+                    logger.error("找不到 Rime 配置文件（用户和系统目录都缺少 default.yaml）")
                     return False
 
                 # 仅在使用 vocotype 目录时创建符号链接

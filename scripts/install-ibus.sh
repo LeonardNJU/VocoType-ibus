@@ -1,8 +1,32 @@
 #!/bin/bash
 # VoCoType Linux IBus 语音输入法安装脚本（用户级安装）
 # 基于 VoCoType 核心引擎: https://github.com/233stone/vocotype-cli
+#
+# 用法: install-ibus.sh [--device <id>] [--sample-rate <rate>]
+#   --device <id>      指定音频设备ID，跳过交互式配置
+#   --sample-rate <rate>  指定采样率（默认44100）
 
 set -e
+
+# 解析命令行参数
+AUDIO_DEVICE=""
+SAMPLE_RATE="44100"
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --device)
+            AUDIO_DEVICE="$2"
+            shift 2
+            ;;
+        --sample-rate)
+            SAMPLE_RATE="$2"
+            shift 2
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
@@ -316,10 +340,9 @@ else
             echo "   RIME 输入方案配置"
             echo "══════════════════════════════════════════"
             echo ""
-
-            # 扫描可用的 schema
-            SHARED_RIME_DATA="/usr/share/rime-data"
+            # 检测已部署的 schema（从 build 目录）
             IBUS_RIME_USER="$HOME/.config/ibus/rime"
+            IBUS_RIME_BUILD="$IBUS_RIME_USER/build"
             declare -a SCHEMAS=()
             declare -A SCHEMA_NAMES=()
 
@@ -356,33 +379,31 @@ else
             SCHEMA_NAMES["stroke_simp"]="笔顺·简化字"
             SCHEMA_NAMES["triungkox"]="中古汉语三拼"
 
-            # 扫描 schema 文件
-            scan_schemas() {
-                local dir="$1"
-                if [ -d "$dir" ]; then
-                    for f in "$dir"/*.schema.yaml; do
-                        if [ -f "$f" ]; then
-                            local schema_id=$(basename "$f" .schema.yaml)
-                            # 检查是否已添加
-                            local found=0
-                            for s in "${SCHEMAS[@]}"; do
-                                if [ "$s" = "$schema_id" ]; then
-                                    found=1
-                                    break
-                                fi
-                            done
-                            if [ $found -eq 0 ]; then
-                                SCHEMAS+=("$schema_id")
-                            fi
-                        fi
-                    done
-                fi
-            }
+            # 扫描已部署的 schema（从 build 目录的 .prism.bin 文件）
+            if [ -d "$IBUS_RIME_BUILD" ]; then
+                for f in "$IBUS_RIME_BUILD"/*.prism.bin; do
+                    if [ -f "$f" ]; then
+                        schema_id=$(basename "$f" .prism.bin)
+                        SCHEMAS+=("$schema_id")
+                    fi
+                done
+            fi
 
-            scan_schemas "$SHARED_RIME_DATA"
-            scan_schemas "$IBUS_RIME_USER"
-
-            if [ ${#SCHEMAS[@]} -gt 0 ]; then
+            # 检查是否有已部署的 schema
+            if [ ${#SCHEMAS[@]} -eq 0 ]; then
+                echo "⚠️  未检测到已部署的 Rime 输入方案"
+                echo ""
+                echo "请先运行 ibus-rime 完成 Rime 部署："
+                echo "  1. 添加 ibus-rime 输入法"
+                echo "  2. 切换到 ibus-rime 并使用一次"
+                echo "  3. Rime 会自动部署输入方案"
+                echo "  4. 然后重新运行本安装脚本"
+                echo ""
+                echo "⚠️  Rime 功能将被禁用，VoCoType 将以纯语音模式运行"
+                ENABLE_RIME=0
+            elif [ ${#SCHEMAS[@]} -gt 0 ]; then
+                echo "检测到 ${#SCHEMAS[@]} 个已部署的输入方案"
+                echo ""
                 # 优先显示 luna_pinyin
                 MENU_SCHEMAS=()
                 if [[ " ${SCHEMAS[*]} " =~ " luna_pinyin " ]]; then
@@ -487,20 +508,36 @@ fi
 
 # 2. 音频设备配置
 echo "[2/6] 音频设备配置..."
-echo ""
-echo "首先需要配置您的麦克风设备。"
-echo "这个过程会："
-echo "  - 列出可用的音频输入设备"
-echo "  - 测试录音和播放"
-echo "  - 验证语音识别效果"
-echo ""
 
-if ! "$PYTHON" "$PROJECT_DIR/scripts/setup-audio.py"; then
+if [ -n "$AUDIO_DEVICE" ]; then
+    # 快速安装模式：直接创建配置文件
+    echo "使用指定设备 ID: $AUDIO_DEVICE (采样率: $SAMPLE_RATE)"
+    CONFIG_DIR="$HOME/.config/vocotype"
+    CONFIG_FILE="$CONFIG_DIR/audio.conf"
+    mkdir -p "$CONFIG_DIR"
+    cat > "$CONFIG_FILE" << EOF
+[audio]
+device_id = $AUDIO_DEVICE
+sample_rate = $SAMPLE_RATE
+EOF
+    echo "✓ 音频配置已保存到: $CONFIG_FILE"
+else
+    # 交互式配置
     echo ""
-    echo "音频配置失败或被取消。"
-    echo "请稍后运行以下命令重新配置："
-    echo "  $PYTHON $PROJECT_DIR/scripts/setup-audio.py"
-    exit 1
+    echo "首先需要配置您的麦克风设备。"
+    echo "这个过程会："
+    echo "  - 列出可用的音频输入设备"
+    echo "  - 测试录音和播放"
+    echo "  - 验证语音识别效果"
+    echo ""
+
+    if ! "$PYTHON" "$PROJECT_DIR/scripts/setup-audio.py"; then
+        echo ""
+        echo "音频配置失败或被取消。"
+        echo "请稍后运行以下命令重新配置："
+        echo "  $PYTHON $PROJECT_DIR/scripts/setup-audio.py"
+        exit 1
+    fi
 fi
 
 echo ""
@@ -525,6 +562,7 @@ PYTHON="VOCOTYPE_PYTHON"
 
 export PYTHONPATH="$VOCOTYPE_HOME:$PYTHONPATH"
 export PYTHONIOENCODING=UTF-8
+export VOCOTYPE_LOG_FILE="$HOME/.local/share/vocotype/ibus.log"
 
 exec $PYTHON "$VOCOTYPE_HOME/ibus/main.py" "$@"
 LAUNCHER
@@ -545,25 +583,40 @@ if [ "$ENABLE_RIME" = "1" ]; then
 
     mkdir -p "$VOCOTYPE_RIME_CONFIG"
     mkdir -p "$VOCOTYPE_RIME_LOG"
+    mkdir -p "$IBUS_RIME_DIR"
 
-    if [ ! -f "$IBUS_RIME_DIR/default.yaml" ]; then
-        echo "⚠️  未检测到 ibus-rime 配置（$IBUS_RIME_DIR/default.yaml）"
-        echo "   Rime 可能无法正常工作，请先运行 ibus-rime 或完成部署"
-    fi
-
-    # 创建 user.yaml（仅用于记录用户选择的方案）
-    cat > "$VOCOTYPE_RIME_CONFIG/user.yaml" << EOF
+    # 检查系统 Rime 数据是否存在（必需）
+    if [ ! -f "/usr/share/rime-data/default.yaml" ] && [ ! -f "/usr/local/share/rime-data/default.yaml" ]; then
+        echo ""
+        echo "❌ 未找到系统 Rime 配置文件"
+        echo "   请确认 rime-data 已安装"
+        echo ""
+        echo "   Fedora/RHEL: sudo dnf install rime-data"
+        echo "   Debian/Ubuntu: sudo apt install librime-data-*"
+        echo "   Arch: sudo pacman -S rime-data"
+        echo ""
+        echo "⚠️  Rime 功能将被禁用，VoCoType 将以纯语音模式运行"
+        ENABLE_RIME=0
+    else
+        # 创建 user.yaml（仅用于记录用户选择的方案）
+        cat > "$VOCOTYPE_RIME_CONFIG/user.yaml" << EOF
 # VoCoType RIME 用户配置
 # 如需更换输入方案，请修改下面的 previously_selected_schema 值
 var:
   previously_selected_schema: "$SELECTED_SCHEMA"
 EOF
-    echo "  创建配置文件: $VOCOTYPE_RIME_CONFIG/user.yaml"
+        echo "  创建配置文件: $VOCOTYPE_RIME_CONFIG/user.yaml"
 
-    echo ""
-    echo "✓ Rime 集成配置完成"
-    echo "  配置目录: $IBUS_RIME_DIR"
-    echo "  输入方案: $SELECTED_SCHEMA"
+        echo ""
+        echo "✓ Rime 集成配置完成"
+        if [ -f "$IBUS_RIME_DIR/default.yaml" ]; then
+            echo "  用户配置: $IBUS_RIME_DIR/default.yaml"
+        else
+            echo "  系统配置: /usr/share/rime-data/default.yaml"
+        fi
+        echo "  用户目录: $IBUS_RIME_DIR"
+        echo "  输入方案: $SELECTED_SCHEMA"
+    fi
     echo ""
 else
     echo "[5/6] 跳过 Rime 配置（纯语音版）..."
