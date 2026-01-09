@@ -33,7 +33,7 @@
 ### IBus 版本
 
 ```bash
-git clone https://github.com/233stone/vocotype-cli.git
+git clone https://github.com/LeonardNJU/VocoType-linux.git
 cd vocotype-cli
 ./scripts/install-ibus.sh
 ibus restart
@@ -44,7 +44,7 @@ ibus restart
 ### Fcitx 5 版本
 
 ```bash
-git clone https://github.com/233stone/vocotype-cli.git
+git clone https://github.com/LeonardNJU/VocoType-linux.git
 cd vocotype-cli
 bash fcitx5/scripts/install-fcitx5.sh
 fcitx5 -r
