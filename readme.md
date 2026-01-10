@@ -17,6 +17,11 @@
 - **0.1 秒级响应** - 感受所言即所得的畅快体验
 - **可选 Rime 集成** - 需要拼音时可启用 Rime，无需切换输入法
 
+## Demo
+https://github.com/user-attachments/assets/94772920-0f9e-4dff-8da5-c9026eb23256
+
+
+
 ## 支持平台
 
 | 输入法框架 | 状态 | 说明 |
