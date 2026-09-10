@@ -24,6 +24,11 @@ struct AudioDeviceInventory {
   std::vector<AudioDevice> inputs;
   std::vector<AudioOutputDevice> outputs;
 };
+struct AudioInputSelection {
+  AudioDevice device;
+  int sample_rate = 16000;
+  std::string native_capture_name;
+};
 class PortAudioRuntime {
 public:
   PortAudioRuntime();
@@ -35,6 +40,7 @@ AudioDeviceInventory list_audio_devices();
 std::vector<AudioDevice> list_input_devices();
 std::vector<AudioOutputDevice> list_output_devices();
 AudioDevice resolve_input_device(const AudioConfig &config);
+AudioInputSelection resolve_input_capture(const AudioConfig &config);
 AudioOutputDevice resolve_output_device(int preferred_id = -1);
 int resolve_sample_rate(const AudioDevice &device, int preferred_rate);
 std::vector<std::int16_t>
@@ -45,7 +51,8 @@ void play_pcm16(const std::vector<std::int16_t> &samples, int sample_rate,
 class AudioCapture {
 public:
   using BlockCallback = std::function<void(const std::vector<std::int16_t> &)>;
-  AudioCapture(AudioDevice device, int sample_rate, int block_ms);
+  AudioCapture(AudioDevice device, int sample_rate, int block_ms,
+               std::string native_capture_name = {});
   ~AudioCapture();
   AudioCapture(const AudioCapture &) = delete;
   AudioCapture &operator=(const AudioCapture &) = delete;
@@ -56,6 +63,7 @@ private:
   AudioDevice device_;
   int sample_rate_;
   int block_ms_;
+  std::string native_capture_name_;
   void *stream_ = nullptr;
 };
 } // namespace vocotype::desktop

@@ -2,13 +2,19 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <fcntl.h>
 #include <mutex>
 #include <optional>
 #include <portaudio.h>
 #include <stdexcept>
+#include <string_view>
 #include <unistd.h>
 #include <utility>
+#ifdef VOCOTYPE_HAVE_ALSA
+#include <alsa/asoundlib.h>
+#include <fstream>
+#endif
 namespace vocotype::desktop {
 namespace {
 void check(PaError error, const char *operation) {
@@ -257,6 +263,132 @@ AudioDevice resolve_input_device(const AudioConfig &config) {
   PortAudioRuntime runtime;
   return resolve_input_device_initialized(config);
 }
+
+#ifdef VOCOTYPE_HAVE_ALSA
+namespace {
+std::optional<std::pair<int, int>> parse_alsa_hw_device(std::string_view name) {
+  const auto marker = name.rfind("(hw:");
+  if (marker == std::string_view::npos)
+    return std::nullopt;
+  const auto comma = name.find(',', marker + 4);
+  const auto close = name.find(')', comma == std::string_view::npos ? marker : comma);
+  if (comma == std::string_view::npos || close == std::string_view::npos)
+    return std::nullopt;
+  try {
+    const int card = std::stoi(std::string(name.substr(marker + 4, comma - marker - 4)));
+    const int device = std::stoi(std::string(name.substr(comma + 1, close - comma - 1)));
+    if (card < 0 || device < 0)
+      return std::nullopt;
+    return std::pair{card, device};
+  } catch (...) {
+    return std::nullopt;
+  }
+}
+
+std::string alsa_card_name(int card) {
+  char *raw = nullptr;
+  if (snd_card_get_name(card, &raw) < 0 || !raw)
+    return {};
+  std::string name(raw);
+  std::free(raw);
+  return name;
+}
+
+std::string alsa_card_id(int card) {
+  std::ifstream input("/proc/asound/card" + std::to_string(card) + "/id");
+  std::string id;
+  std::getline(input, id);
+  return id;
+}
+
+std::optional<int> find_matching_alsa_card(const AudioConfig &config,
+                                           int preferred_card) {
+  const auto matches = [&](int card) {
+    const auto name = alsa_card_name(card);
+    return !name.empty() && config.device_name.find(name) != std::string::npos;
+  };
+  if (matches(preferred_card))
+    return preferred_card;
+
+  int card = -1;
+  int matched = -1;
+  int count = 0;
+  while (snd_card_next(&card) >= 0 && card >= 0) {
+    if (matches(card)) {
+      matched = card;
+      ++count;
+    }
+  }
+  return count == 1 ? std::optional<int>(matched) : std::nullopt;
+}
+
+bool alsa_capture_format_supported(const std::string &pcm_name, int channels,
+                                   int rate) {
+  snd_pcm_t *pcm = nullptr;
+  if (snd_pcm_open(&pcm, pcm_name.c_str(), SND_PCM_STREAM_CAPTURE,
+                   SND_PCM_NONBLOCK) < 0)
+    return false;
+  snd_pcm_hw_params_t *params = nullptr;
+  snd_pcm_hw_params_alloca(&params);
+  bool ok = snd_pcm_hw_params_any(pcm, params) >= 0 &&
+            snd_pcm_hw_params_test_access(
+                pcm, params, SND_PCM_ACCESS_RW_INTERLEAVED) >= 0 &&
+            snd_pcm_hw_params_test_format(pcm, params, SND_PCM_FORMAT_S16_LE) >= 0 &&
+            snd_pcm_hw_params_test_channels(pcm, params,
+                                            static_cast<unsigned int>(channels)) >= 0 &&
+            snd_pcm_hw_params_test_rate(pcm, params,
+                                        static_cast<unsigned int>(rate), 0) >= 0;
+  snd_pcm_close(pcm);
+  return ok;
+}
+
+std::optional<AudioInputSelection>
+resolve_alsa_hardware_input(const AudioConfig &config) {
+  if (config.device_name.empty())
+    return std::nullopt;
+  const auto parsed = parse_alsa_hw_device(config.device_name);
+  if (!parsed)
+    return std::nullopt;
+  const auto card = find_matching_alsa_card(config, parsed->first);
+  if (!card)
+    return std::nullopt;
+  const auto id = alsa_card_id(*card);
+  if (id.empty())
+    return std::nullopt;
+  const std::string pcm_name = "hw:CARD=" + id + ",DEV=" +
+                               std::to_string(parsed->second);
+
+  std::vector<int> rates;
+  for (const int rate : {config.sample_rate, 48000, 44100, 32000, 16000}) {
+    if (rate > 0 && std::find(rates.begin(), rates.end(), rate) == rates.end())
+      rates.push_back(rate);
+  }
+  for (const int rate : rates) {
+    for (const int channels : {1, 2}) {
+      if (!alsa_capture_format_supported(pcm_name, channels, rate))
+        continue;
+      AudioDevice device;
+      device.id = config.device_id.value_or(-1);
+      device.name = config.device_name;
+      device.max_input_channels = channels;
+      device.default_sample_rate = rate;
+      return AudioInputSelection{std::move(device), rate, pcm_name};
+    }
+  }
+  return std::nullopt;
+}
+} // namespace
+#endif
+
+AudioInputSelection resolve_input_capture(const AudioConfig &config) {
+#ifdef VOCOTYPE_HAVE_ALSA
+  if (const auto fast = resolve_alsa_hardware_input(config))
+    return *fast;
+#endif
+  AudioDevice device = resolve_input_device(config);
+  const int sample_rate = resolve_sample_rate(device, config.sample_rate);
+  return AudioInputSelection{std::move(device), sample_rate, {}};
+}
 AudioOutputDevice resolve_output_device(int preferred_id) {
   ScopedStderrSilence silence;
   PortAudioRuntime runtime;
@@ -376,17 +508,96 @@ void play_pcm16(const std::vector<std::int16_t> &samples, int sample_rate,
     throw;
   }
 }
-AudioCapture::AudioCapture(AudioDevice device, int sample_rate, int block_ms)
+AudioCapture::AudioCapture(AudioDevice device, int sample_rate, int block_ms,
+                           std::string native_capture_name)
     : device_(std::move(device)), sample_rate_(sample_rate),
-      block_ms_(block_ms) {}
+      block_ms_(block_ms), native_capture_name_(std::move(native_capture_name)) {}
 AudioCapture::~AudioCapture() {
-  if (stream_) {
-    auto *stream = static_cast<PaStream *>(stream_);
-    (void)Pa_AbortStream(stream);
-    (void)Pa_CloseStream(stream);
+  if (!stream_)
+    return;
+#ifdef VOCOTYPE_HAVE_ALSA
+  if (!native_capture_name_.empty()) {
+    auto *pcm = static_cast<snd_pcm_t *>(stream_);
+    snd_pcm_drop(pcm);
+    snd_pcm_close(pcm);
+    return;
   }
+#endif
+  auto *stream = static_cast<PaStream *>(stream_);
+  (void)Pa_AbortStream(stream);
+  (void)Pa_CloseStream(stream);
 }
 void AudioCapture::run(std::atomic_bool &stop, const BlockCallback &callback) {
+#ifdef VOCOTYPE_HAVE_ALSA
+  if (!native_capture_name_.empty()) {
+    snd_pcm_t *pcm = nullptr;
+    const int opened = snd_pcm_open(&pcm, native_capture_name_.c_str(),
+                                    SND_PCM_STREAM_CAPTURE, 0);
+    if (opened < 0)
+      throw std::runtime_error("cannot open ALSA microphone " +
+                               native_capture_name_ + ": " +
+                               snd_strerror(opened));
+    stream_ = pcm;
+    const int input_channels = std::max(1, device_.max_input_channels);
+    const int configured = snd_pcm_set_params(
+        pcm, SND_PCM_FORMAT_S16_LE, SND_PCM_ACCESS_RW_INTERLEAVED,
+        static_cast<unsigned int>(input_channels),
+        static_cast<unsigned int>(sample_rate_), 0,
+        static_cast<unsigned int>(std::max(5000, block_ms_ * 1000)));
+    if (configured < 0) {
+      snd_pcm_close(pcm);
+      stream_ = nullptr;
+      throw std::runtime_error("cannot configure ALSA microphone " +
+                               native_capture_name_ + ": " +
+                               snd_strerror(configured));
+    }
+    const snd_pcm_uframes_t frames = static_cast<snd_pcm_uframes_t>(
+        std::max(64, sample_rate_ * block_ms_ / 1000));
+    std::vector<std::int16_t> interleaved(
+        static_cast<std::size_t>(frames) *
+        static_cast<std::size_t>(input_channels));
+    try {
+      while (!stop.load(std::memory_order_relaxed)) {
+        snd_pcm_sframes_t count = snd_pcm_readi(pcm, interleaved.data(), frames);
+        if (count == -EPIPE) {
+          const int recovered = snd_pcm_prepare(pcm);
+          if (recovered < 0)
+            throw std::runtime_error("ALSA microphone overrun recovery failed: " +
+                                     std::string(snd_strerror(recovered)));
+          continue;
+        }
+        if (count < 0) {
+          const int recovered = snd_pcm_recover(pcm, static_cast<int>(count), 1);
+          if (recovered >= 0)
+            continue;
+          throw std::runtime_error("ALSA microphone read failed: " +
+                                   std::string(snd_strerror(static_cast<int>(count))));
+        }
+        if (count == 0)
+          continue;
+        const auto samples = static_cast<std::size_t>(count) *
+                             static_cast<std::size_t>(input_channels);
+        if (input_channels == 1) {
+          callback(std::vector<std::int16_t>(interleaved.begin(),
+                                             interleaved.begin() + samples));
+        } else {
+          std::vector<std::int16_t> exact(interleaved.begin(),
+                                          interleaved.begin() + samples);
+          callback(downmix_to_mono(exact, input_channels));
+        }
+      }
+      snd_pcm_drop(pcm);
+      snd_pcm_close(pcm);
+      stream_ = nullptr;
+      return;
+    } catch (...) {
+      snd_pcm_drop(pcm);
+      snd_pcm_close(pcm);
+      stream_ = nullptr;
+      throw;
+    }
+  }
+#endif
   std::optional<PortAudioRuntime> runtime;
   AudioDevice current;
   int input_channels = 0;

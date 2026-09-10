@@ -79,8 +79,9 @@ int main(int argc, char **argv) {
       return 0;
     }
     AudioConfig config = load_audio_config(options.config);
-    const AudioDevice device = resolve_input_device(config);
-    const int sample_rate = resolve_sample_rate(device, config.sample_rate);
+    const AudioInputSelection input = resolve_input_capture(config);
+    const AudioDevice device = input.device;
+    const int sample_rate = input.sample_rate;
     std::atomic_bool stop{false};
     global_stop = &stop;
     std::signal(SIGINT, signal_handler);
@@ -265,7 +266,8 @@ int main(int argc, char **argv) {
       preview_accepting.store(false);
     });
 
-    AudioCapture capture(device, sample_rate, config.block_ms);
+    AudioCapture capture(device, sample_rate, config.block_ms,
+                         input.native_capture_name);
     std::string capture_error;
     std::atomic_bool first_audio_block{false};
     std::thread capture_thread([&] {
