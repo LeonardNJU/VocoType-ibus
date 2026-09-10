@@ -57,6 +57,14 @@ if(VOCOTYPE_BUILD_FCITX_TESTS)
     target_include_directories(vocotype-recorder-shutdown-tests PRIVATE ../common)
     add_test(NAME vocotype-recorder-shutdown
              COMMAND vocotype-recorder-shutdown-tests)
+
+    add_executable(vocotype-timer-lifetime-tests
+        tests/timer_lifetime_tests.cpp
+    )
+    target_include_directories(vocotype-timer-lifetime-tests PRIVATE ../common)
+    target_link_libraries(vocotype-timer-lifetime-tests Fcitx5::Utils)
+    add_test(NAME vocotype-timer-lifetime
+             COMMAND vocotype-timer-lifetime-tests)
 endif()
 
 install(TARGETS vocotype LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}/fcitx5)

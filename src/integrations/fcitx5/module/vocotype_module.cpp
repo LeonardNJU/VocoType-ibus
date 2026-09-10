@@ -1,5 +1,6 @@
 #include "vocotype_module.h"
 #include "recorder_shutdown.hpp"
+#include "timer_lifetime.hpp"
 
 #include <algorithm>
 #include <array>
@@ -643,7 +644,11 @@ void VoCoTypeModule::showTemporaryMessage(fcitx::InputContext *ic,
     edit_hint_timer_ = instance_->eventLoop().addTimeEvent(
       CLOCK_MONOTONIC, fcitx::now(CLOCK_MONOTONIC) + 1200000ULL, 0,
         [this, ic_ref](fcitx::EventSourceTime *, uint64_t) {
-            edit_hint_timer_.reset();
+            // Keep the currently executing event source alive until the
+            // callback has finished using its captures, while clearing the
+            // member immediately so nested cancellation/rescheduling is safe.
+            [[maybe_unused]] auto timer_keepalive =
+                vocotype::fcitx5::keepTimerAliveThroughCallback(edit_hint_timer_);
             auto *ic_ptr = ic_ref.get();
             if (ic_ptr && ic_ptr->hasFocus()) {
                 clearOwnedUI(ic_ptr);
@@ -1019,7 +1024,8 @@ void VoCoTypeModule::armPendingRecordingStart(
         fcitx::now(CLOCK_MONOTONIC) +
             static_cast<uint64_t>(ptt_hold_threshold_ms_) * 1000ULL,
       0, [this, ic_ref](fcitx::EventSourceTime *, uint64_t) {
-            ptt_hold_timer_.reset();
+            [[maybe_unused]] auto timer_keepalive =
+                vocotype::fcitx5::keepTimerAliveThroughCallback(ptt_hold_timer_);
             auto *ic_ptr = ic_ref.get();
             if (!ptt_pressed_ || is_recording_ || !ic_ptr || !ic_ptr->hasFocus()) {
                 cancelPendingRecordingStart();
@@ -1051,7 +1057,8 @@ void VoCoTypeModule::armPendingPttRelease(fcitx::InputContext *ic) {
         CLOCK_MONOTONIC,
       fcitx::now(CLOCK_MONOTONIC) + PTT_AUTOREPEAT_RELEASE_GRACE_US, 0,
         [this, ic_ref](fcitx::EventSourceTime *, uint64_t) {
-            ptt_release_timer_.reset();
+            [[maybe_unused]] auto timer_keepalive =
+                vocotype::fcitx5::keepTimerAliveThroughCallback(ptt_release_timer_);
             auto *ic_ptr = ic_ref.get();
             if (is_recording_) {
                 stopAndTranscribe();
@@ -1509,7 +1516,8 @@ void VoCoTypeModule::scheduleVoiceEditPoll(
     voice_edit_poll_timer_ = instance_->eventLoop().addTimeEvent(
       CLOCK_MONOTONIC, fcitx::now(CLOCK_MONOTONIC) + POLISH_POLL_INTERVAL_US, 0,
         [this, ic_ref](fcitx::EventSourceTime *, uint64_t) {
-            voice_edit_poll_timer_.reset();
+            [[maybe_unused]] auto timer_keepalive =
+                vocotype::fcitx5::keepTimerAliveThroughCallback(voice_edit_poll_timer_);
         if (active_voice_edit_task_id_.empty() || voice_edit_poll_in_flight_) {
                 return false;
             }
@@ -1685,7 +1693,8 @@ void VoCoTypeModule::schedulePolishPoll(
         CLOCK_MONOTONIC,
         fcitx::now(CLOCK_MONOTONIC) + POLISH_POLL_INTERVAL_US, 0,
         [this, ic_ref](fcitx::EventSourceTime *, uint64_t) {
-            polish_poll_timer_.reset();
+            [[maybe_unused]] auto timer_keepalive =
+                vocotype::fcitx5::keepTimerAliveThroughCallback(polish_poll_timer_);
             if (active_polish_task_id_.empty() || polish_poll_in_flight_) {
                 return false;
             }
@@ -1944,14 +1953,10 @@ void VoCoTypeModule::showStreamingPreview(fcitx::InputContext *ic,
     if (!ic || text.empty()) {
         return;
     }
-    if (min_recording_ms_ > 0) {
-        const uint64_t now_us = fcitx::now(CLOCK_MONOTONIC);
-        if (recording_started_us_ == 0 || now_us < recording_started_us_ ||
-            now_us - recording_started_us_ <
-                static_cast<uint64_t>(min_recording_ms_) * 1000ULL) {
-            return;
-        }
-    }
+    // min_recording_ms_ is a submission guard, not a listening delay.
+    // Hiding partials until that duration made the first ~2 seconds look as if
+    // the microphone were deaf even though those samples were already captured
+    // and included in final ASR.
     streaming_preview_visible_ = true;
     streaming_preview_text_ = text;
     if (recording_status_text_.empty()) {
@@ -2002,7 +2007,8 @@ void VoCoTypeModule::schedulePanelAnimationFrame(
         CLOCK_MONOTONIC,
         fcitx::now(CLOCK_MONOTONIC) + RECORDING_ANIMATION_INTERVAL_US, 0,
         [this, ic_ref, generation](fcitx::EventSourceTime *, uint64_t) {
-            recording_animation_timer_.reset();
+            [[maybe_unused]] auto timer_keepalive =
+                vocotype::fcitx5::keepTimerAliveThroughCallback(recording_animation_timer_);
             if (generation != panel_animation_generation_) {
                 return false;
             }
