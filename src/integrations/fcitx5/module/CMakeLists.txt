@@ -30,7 +30,10 @@ add_library(vocotype MODULE
     ../common/ipc_client.cpp
     ../common/recorder_shutdown.cpp
 )
-target_include_directories(vocotype PRIVATE ../common)
+target_include_directories(vocotype PRIVATE
+    ../common
+    ../../../common/include
+)
 target_compile_definitions(vocotype PRIVATE
     VOCOTYPE_FCITX5_RECORDER_PATH="${VOCOTYPE_FCITX5_RECORDER_PATH}"
     VOCOTYPE_FCITX5_BACKEND_PATH="${VOCOTYPE_FCITX5_BACKEND_PATH}"

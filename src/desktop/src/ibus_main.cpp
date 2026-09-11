@@ -1,3 +1,4 @@
+#include "vocotype/common/preview_text.hpp"
 #include "vocotype/desktop/config.hpp"
 #include "vocotype/desktop/hotkey.hpp"
 #include "vocotype/desktop/ipc.hpp"
@@ -382,8 +383,11 @@ void start_recording(VocotypeEngine *engine, VoiceMode mode,
           if (type == "partial" && !value.empty()) {
             post_engine(engine, [generation, value](VocotypeEngine *target) {
               if (target->state->generation.load() == generation &&
-                  target->state->recording.load())
-                show_aux(target, "🎤 " + value);
+                  target->state->recording.load()) {
+                show_aux(target,
+                         "🎤 " + vocotype::common::streaming_preview_tail(
+                                      value, 40));
+              }
             });
           } else if (type == "error" && !value.empty()) {
             post_engine(engine, [generation, value](VocotypeEngine *target) {

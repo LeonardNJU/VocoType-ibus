@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- macOS final dictation now commits long transcripts in bounded composed-character chunks instead of one oversized InputMethodKit insertion, preventing long recordings from being silently dropped by target text clients after final ASR succeeds.
+- Linux Fcitx 5 and IBus streaming previews now show only the latest 40 Unicode code points, prefixed with an ellipsis when older speech is hidden, so long dictation does not expand into an unbounded single-line preview.
+
 ## [5.0.1] - 2026-08-18
 
 ### Fixed

@@ -1,3 +1,4 @@
+#include "vocotype/common/preview_text.hpp"
 #include "vocotype/desktop/streaming_preview.hpp"
 #include "vocotype/desktop/task_status.hpp"
 
@@ -46,6 +47,22 @@ int main() {
   preview.reset();
   require(!preview.has_text() && preview.display_text().empty(),
           "reset retained stale text");
+
+  const std::string long_chinese =
+      "一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十"
+      "一二三四五六七八九十一二三四五六七八九十";
+  const std::string clipped =
+      vocotype::common::streaming_preview_tail(long_chinese, 40);
+  require(clipped.starts_with("…"), "long preview is missing ellipsis");
+  require(clipped ==
+              "…一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十"
+              "一二三四五六七八九十",
+          "long Chinese preview did not retain exactly the final 40 code points");
+  require(vocotype::common::streaming_preview_tail("短句", 40) == "短句",
+          "short preview was modified");
+  require(vocotype::common::streaming_preview_tail("abc😀def😀ghi", 5) ==
+              "…f😀ghi",
+          "UTF-8 preview tail split a multibyte code point");
 
   require(task_status_is_terminal("final"), "final must be terminal");
   require(task_status_is_terminal("error"), "error must be terminal");

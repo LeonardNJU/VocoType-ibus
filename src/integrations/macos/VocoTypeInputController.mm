@@ -338,6 +338,57 @@ std::size_t utf8_codepoint_count(NSString *text) {
       }));
 }
 
+constexpr NSUInteger kFinalCommitChunkCharacters = 64;
+
+NSArray<NSString *> *final_commit_chunks(NSString *text) {
+  if (!text || text.length == 0)
+    return @[];
+  NSMutableArray<NSString *> *chunks = [NSMutableArray array];
+  NSMutableString *current = [NSMutableString string];
+  __block NSUInteger count = 0;
+  [text enumerateSubstringsInRange:NSMakeRange(0, text.length)
+                           options:NSStringEnumerationByComposedCharacterSequences
+                        usingBlock:^(NSString *substring, NSRange, NSRange, BOOL *) {
+    if (count >= kFinalCommitChunkCharacters) {
+      [chunks addObject:[current copy]];
+      [current setString:@""];
+      count = 0;
+    }
+    if (substring)
+      [current appendString:substring];
+    ++count;
+  }];
+  if (current.length > 0)
+    [chunks addObject:[current copy]];
+  return chunks;
+}
+
+BOOL commit_final_text(id<IMKTextInput, NSObject> client, NSString *text,
+                       NSUInteger *chunkCount, NSString **commitError) {
+  if (chunkCount)
+    *chunkCount = 0;
+  if (!client) {
+    if (commitError)
+      *commitError = @"目标输入框已失效";
+    return NO;
+  }
+
+  NSArray<NSString *> *chunks = final_commit_chunks(text);
+  @try {
+    for (NSString *chunk in chunks) {
+      [client insertText:chunk
+        replacementRange:NSMakeRange(NSNotFound, NSNotFound)];
+    }
+  } @catch (NSException *exception) {
+    if (commitError)
+      *commitError = exception.reason ? exception.reason : @"文本提交失败";
+    return NO;
+  }
+  if (chunkCount)
+    *chunkCount = chunks.count;
+  return chunks.count > 0;
+}
+
 Snapshot capture_snapshot(id<IMKTextInput, NSObject> client) {
   Snapshot result;
   if (!client)
@@ -1110,6 +1161,14 @@ NSDictionary<NSString *, id> *VocoTypeStatusPanelLongTextSmokeMetrics(void) {
   metrics[@"after_empty"] = afterEmpty ? afterEmpty : @"";
   metrics[@"after_invisible"] = afterInvisible ? afterInvisible : @"";
 
+  NSString *commitProbe =
+      @"第一段用于验证长文本提交分块不会丢字。第二段继续加入足够多的中文字符，确保超过单个提交块的容量。"
+       "第三段继续延长内容，并加入 emoji 😀 与组合字符 é，最后以固定尾句结束：提交完整。";
+  NSArray<NSString *> *commitChunks = final_commit_chunks(commitProbe);
+  NSString *rejoinedCommit = [commitChunks componentsJoinedByString:@""];
+  metrics[@"commit_chunk_count"] = @(commitChunks.count);
+  metrics[@"commit_rejoined"] = rejoinedCommit ? rejoinedCommit : @"";
+
   __block NSString *asyncOwnedText = nil;
   NSString *expectedAsyncText =
       @"这是跨线程延迟派发后的完整中文流式文本，源回调栈退出后仍必须保持逐字完整。";
@@ -1139,6 +1198,8 @@ NSDictionary<NSString *, id> *VocoTypeStatusPanelLongTextSmokeMetrics(void) {
                        [afterEmpty isEqualToString:shown] &&
                        [afterInvisible isEqualToString:shown] &&
                        ![afterInvisible isEqualToString:@"正在听…"] &&
+                       commitChunks.count >= 2 &&
+                       [rejoinedCommit isEqualToString:commitProbe] &&
                        [asyncOwnedText isEqualToString:expectedAsyncText];
   metrics[@"success"] = @(success);
   [panel hide];
@@ -1682,22 +1743,15 @@ NSDictionary<NSString *, id> *VocoTypeVoiceLifecycleSmokeMetrics(void) {
                                      final_result.value("original_text", ""))
                 : final_result.value("text", "");
         if (final_result.value("success", false) && !text.empty()) {
-          BOOL committed = NO;
           NSString *commitError = nil;
-          @try {
-            if (target_client) {
-              [target_client insertText:to_ns(text)
-                       replacementRange:NSMakeRange(NSNotFound, NSNotFound)];
-              committed = YES;
-            } else {
-              commitError = @"目标输入框已失效";
-            }
-          } @catch (NSException *exception) {
-            commitError = exception.reason ? exception.reason : @"文本提交失败";
-          }
+          NSUInteger commitChunks = 0;
+          const BOOL committed =
+              commit_final_text(target_client, to_ns(text), &commitChunks,
+                                &commitError);
           if (committed) {
-            NSLog(@"VoCoType-linux: committed final text chars=%zu context=%@",
-                  text.size(), to_ns(client_context));
+            NSLog(@"VoCoType-linux: committed final text bytes=%zu chunks=%lu context=%@",
+                  text.size(), static_cast<unsigned long>(commitChunks),
+                  to_ns(client_context));
             [controller->_status hide];
           } else {
             [controller showStatus:[@"❌ " stringByAppendingString:

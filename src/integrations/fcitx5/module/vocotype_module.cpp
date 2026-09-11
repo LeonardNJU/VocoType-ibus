@@ -1,4 +1,5 @@
 #include "vocotype_module.h"
+#include "vocotype/common/preview_text.hpp"
 #include "recorder_shutdown.hpp"
 #include "timer_lifetime.hpp"
 
@@ -1958,7 +1959,7 @@ void VoCoTypeModule::showStreamingPreview(fcitx::InputContext *ic,
     // the microphone were deaf even though those samples were already captured
     // and included in final ASR.
     streaming_preview_visible_ = true;
-    streaming_preview_text_ = text;
+    streaming_preview_text_ = vocotype::common::streaming_preview_tail(text, 40);
     if (recording_status_text_.empty()) {
     recording_status_text_ =
         recording_long_mode_ ? "🎤 录音中(长句)..." : "🎤 录音中...";
