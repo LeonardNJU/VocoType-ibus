@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.0.6] - 2026-09-11
+
 ### Fixed
 
 - macOS final dictation now commits long transcripts in bounded composed-character chunks instead of one oversized InputMethodKit insertion, preventing long recordings from being silently dropped by target text clients after final ASR succeeds.
