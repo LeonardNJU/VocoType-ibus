@@ -187,6 +187,7 @@ std::vector<int> sample_rate_candidates(int preferred, int device_default) {
   return candidates;
 }
 
+#ifndef __APPLE__
 bool input_format_supported(const AudioDevice &device, int channels, int rate) {
   const PaDeviceInfo *info = Pa_GetDeviceInfo(device.id);
   if (!info || channels <= 0 || channels > info->maxInputChannels)
@@ -199,6 +200,7 @@ bool input_format_supported(const AudioDevice &device, int channels, int rate) {
   return Pa_IsFormatSupported(&parameters, nullptr, rate) ==
          paFormatIsSupported;
 }
+#endif
 
 bool output_format_supported(const AudioOutputDevice &device, int channels,
                              int rate) {
@@ -395,6 +397,20 @@ AudioOutputDevice resolve_output_device(int preferred_id) {
   return resolve_output_device_initialized(preferred_id);
 }
 int resolve_sample_rate(const AudioDevice &device, int preferred_rate) {
+#ifdef __APPLE__
+  // CoreAudio's PortAudio backend may create/start a temporary AudioUnit from
+  // Pa_IsFormatSupported().  On current macOS this can block indefinitely in
+  // HALC_ProxyIOContext even for the built-in microphone, leaving both the
+  // Playground and push-to-talk recorder stuck before the first audio block.
+  // PortAudio already reports the device's native/default rate during normal
+  // enumeration, so avoid the destructive preflight probe on macOS and let
+  // Pa_OpenStream return a real error if the requested format cannot be opened.
+  if (preferred_rate > 0)
+    return preferred_rate;
+  if (device.default_sample_rate > 0)
+    return device.default_sample_rate;
+  return 48000;
+#else
   ScopedStderrSilence silence;
   PortAudioRuntime runtime;
   const AudioDevice current = resolve_current_input(device);
@@ -407,6 +423,7 @@ int resolve_sample_rate(const AudioDevice &device, int preferred_rate) {
   }
   throw std::runtime_error(
       "audio device has no supported mono or stereo PCM16 sample rate");
+#endif
 }
 std::vector<std::int16_t>
 resample_linear(const std::vector<std::int16_t> &input, int input_rate,
@@ -605,12 +622,19 @@ void AudioCapture::run(std::atomic_bool &stop, const BlockCallback &callback) {
     ScopedStderrSilence silence;
     runtime.emplace();
     current = resolve_current_input(device_);
+#ifdef __APPLE__
+    // See resolve_sample_rate(): Pa_IsFormatSupported() can wedge CoreAudio on
+    // macOS before recording starts.  Use the enumerated channel capability
+    // and perform the real validation in Pa_OpenStream instead.
+    input_channels = std::min(2, std::max(0, current.max_input_channels));
+#else
     for (const int channels : {1, 2}) {
       if (input_format_supported(current, channels, sample_rate_)) {
         input_channels = channels;
         break;
       }
     }
+#endif
   }
   if (input_channels == 0)
     throw std::runtime_error(

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.0.7] - 2026-09-11
+
+### Fixed
+
+- macOS microphone capture no longer calls PortAudio's `Pa_IsFormatSupported()` preflight before recording; on macOS 26 that probe can create a temporary CoreAudio I/O context and wedge inside the HAL before the first sample arrives. Capture now uses the enumerated device rate/channel capability and lets the real stream open validate the format.
+
 ## [5.0.6] - 2026-09-11
 
 ### Fixed
